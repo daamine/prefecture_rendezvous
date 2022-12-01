@@ -19,14 +19,24 @@
 # THE SOFTWARE.
 
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 import time
 import logging
 from pygame import mixer
+import argparse
 
-URL = "https://www.yvelines.gouv.fr/booking/create/20024/0"
+def parse_args():
+    parser = argparse.ArgumentParser(description='Automatic script to notify a RDV in prefecture.')
+    parser.add_argument('-u', '--url', default="https://pprdv.interieur.gouv.fr/booking/create/989", required=True, help='url de la page de rendez vous')
+    parser.add_argument('-t', '--timeout', default=180, type=int, help='Timeout entre les requetes.')
+    return parser.parse_args()
+
+args = parse_args()
+URL = args.url
+REFRESH_TIMEOUT = args.timeout
+
 logging.basicConfig(
         format='%(asctime)s %(levelname)-8s %(message)s',
         level=logging.INFO,
@@ -34,49 +44,56 @@ logging.basicConfig(
 
 def refresh(browser):
     if browser.current_url == URL:
-        logging.info("Refreshing " + browser.current_url)
+        logging.info(f"Refreshing {browser.current_url}")
         browser.refresh()
     else:
-        logging.info("Reload url " + URL)
+        logging.info(f"Reloading URL {URL}")
         browser.get(URL)
 
-mixer.init() #you must initialize the mixer
-s=Service(ChromeDriverManager().install())
-browser = webdriver.Chrome(service=s)
-browser.get(URL)
-while True:
-    try:
-        time.sleep(10)
-        button = browser.find_element(By.XPATH, "//input[@type='checkbox']")
-        button.click()
-        time.sleep(5)
-        button = browser.find_element(By.XPATH, "//input[@type='submit' and @name='nextButton']")
-        button.click()
-        time.sleep(5)
-    except:
-        logging.error("error occured when trying to find the elements, retry after 1 minute")
-        time.sleep(60)
-        refresh(browser)
-        continue
-    
+def click_button(browser, xpath):
+    button = browser.find_element(By.XPATH, xpath)
+    button.click()
+
+def check_status(browser):
     list1 = browser.find_elements(By.XPATH, "//*[contains(text(),'" + "pas calendrier disponible" + "')]")
     list2 =  browser.find_elements(By.XPATH, "//*[contains(text(),'" + "surchargé" + "')]")
     list3 =  browser.find_elements(By.XPATH, "//*[contains(text(),'" + "existe plus de plage horaire libre" + "')]")
-    for element in list1:
-        logging.info("Status : " + element.text)
-    for element in list2:
-        logging.info("Status : " + element.text)
-    for element in list3:
-        logging.info("Status : " + element.text)
-    if len(list1) > 0 or len(list2) > 0 or len(list3) > 0:
-        logging.warning("No RDV found, retry after 1 minute...")
-        time.sleep(60)
+    for element in list1 + list2 + list3:
+        logging.info(f"Status : {element.text}")
+    return len(list1) > 0 or len(list2) > 0 or len(list3) > 0
+
+mixer.init()
+s = Service(ChromeDriverManager().install())
+browser = webdriver.Chrome(service=s)
+browser.get(URL)
+
+while True:
+    try:
+        time.sleep(5)
+        click_button(browser, "//input[@type='checkbox']")
+        time.sleep(5)
+        click_button(browser, "//input[@type='submit' and @name='nextButton']")
+        time.sleep(10)
+        click_button(browser, "//input[@type='radio' and @id='planning990']")
+        time.sleep(5)
+        click_button(browser, "//input[@type='submit' and @name='nextButton']")
+        time.sleep(5)
+    except Exception as e:
+        logging.error(f"Error occurred when trying to find elements, retrying after 1 minute {e}")
+        print(e)
+        time.sleep(180)
+        refresh(browser)
+        continue
+
+    if check_status(browser):
+        logging.warning("No appointment found, retrying after 1 minute...")
+        time.sleep(REFRESH_TIMEOUT)
         refresh(browser)
     else:
          break
 
-logging.info("notify !!!!!!")
-alert=mixer.Sound('mixkit-fairy-bells-583.wav')
-alert.play(loops = -1)
+logging.info("Notifying!!!")
+alert = mixer.Sound('mixkit-fairy-bells-583.wav')
+alert.play(loops=-1)
 time.sleep(3600) # sleep one hour
 browser.close()
